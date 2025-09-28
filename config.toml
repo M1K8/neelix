@@ -1,0 +1,8 @@
+devices = [ 
+    {name= "m1keybioard/m1k3_0",vid = 0xfaf0,pid = 0xfaf0,usage_page = 0xff60,usage = 0x0061},
+    ]
+
+
+recognised_processes = [
+    "steam.exe",
+]
