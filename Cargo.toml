@@ -10,3 +10,4 @@ hidapi = "2.6.3"
 sysinfo = "^0"
 tokio = { version = "^1.19", features = ["full"] }
 win-gsmtc = "0.1.0"
+mpris = "2.0.1"
