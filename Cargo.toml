@@ -9,5 +9,13 @@ toml = "^0.9"
 hidapi = "2.6.3"
 sysinfo = "^0"
 tokio = { version = "^1.19", features = ["full"] }
+ispc-downsampler = "0.4.0"
+image = "0.25.8"
+
+
+[target.'cfg(windows)'.dependencies]
 win-gsmtc = "0.1.0"
+
+[target.'cfg(linux)'.dependencies]
 mpris = "2.0.1"
+reqwest = "0.12.24"

@@ -40,11 +40,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let (send, recv) = tokio::sync::mpsc::channel(100);
-    let (sendMedia, mut recvMedia) = tokio::sync::mpsc::channel(100);
+    let (send_media, mut recv_media) = tokio::sync::mpsc::channel(5);
 
-    tokio::spawn(async move { now_playing::poll_now_playing(sendMedia).await });
+    tokio::spawn(async move { now_playing::poll_now_playing(send_media).await });
 
-    while let Some(evt) = recvMedia.recv().await {
+    while let Some(evt) = recv_media.recv().await {
         println!("Now Playing: {:?}", evt);
     }
 

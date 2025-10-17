@@ -1,23 +1,13 @@
-#[cfg(target_os = "windows")]
-use core::time;
-#[cfg(target_os = "windows")]
 use gsmtc::{ManagerEvent::*, SessionUpdateEvent::*};
+use image::ImageReader;
+use std::io::Cursor;
 
+use neelix::schema::MediaInfo;
 use tokio::sync::mpsc::{self};
 
 #[cfg(target_os = "linux")]
 use mpris::PlayerFinder;
 
-#[derive(Debug, Clone)]
-pub struct MediaInfo {
-    pub title: String,
-    pub artist: String,
-    pub album: Option<String>,
-    pub is_shuffle: bool,
-    pub artwork: Option<Vec<u8>>,
-}
-
-#[cfg(target_os = "windows")]
 pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), String> {
     let rx = gsmtc::SessionManager::create().await;
     if let Err(err) = rx {
@@ -32,33 +22,55 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
                     source,
                 } => {
                     println!("Created session: {{id={session_id}, source={source}}}");
-                    let mut is_shuff = false;
                     let mut last_touched: i64 = 0;
                     while let Some(evt) = rx.recv().await {
                         let mut image_vec: Option<Vec<u8>> = None;
                         match evt {
                             Model(model) => {
                                 if let Some(playback) = model.playback {
-                                    is_shuff = playback.shuffle;
+                                   let shuffle_info = MediaInfo {
+                                        title: None,
+                                        artist: None,
+                                        album: None,
+                                        is_shuffle: Some(playback.shuffle),
+                                        artwork: None,
+                                    };
+                                    resp.send(shuffle_info).await.ok();
                                 }
                             }
                             Media(model, image) => {
                                 if let Some(timelime) = model.timeline {
                                     if timelime.last_updated_at_ms == last_touched {
-                                        continue;
+                                        continue; // we see event duplication, so account for that here.
                                     }
                                     last_touched = timelime.last_updated_at_ms;
                                 }
                                 if let Some(image) = image {
-                                    image_vec = Some(image.data);
+                                    let cursor = Cursor::new(&image.data);
+                                    let Ok(img_reader) =
+                                        ImageReader::new(cursor).with_guessed_format()
+                                    else {
+                                        println!("Could not read image data");
+                                        continue;
+                                    };
+                                    let Ok(mut image) = img_reader.decode() else {
+                                        println!("Could not decode image data");
+                                        continue;
+                                    };
+
+                                    image = image.thumbnail(50, 50);
+                                    let e = image.to_rgba8().into_raw();
+                                    println!("{}", &e.len());
+                                    image_vec = Some(e);
+
                                 }
                                 if let Some(media) = model.media {
                                     let mut media_info = MediaInfo {
-                                        title: media.title,
-                                        artist: media.artist,
+                                        title: Some(media.title),
+                                        artist: Some(media.artist),
+                                        is_shuffle: None,
                                         album: None,
-                                        is_shuffle: is_shuff,
-                                        artwork: image_vec,
+                                        artwork: None// image_vec,
                                     };
                                     if let Some(album) = media.album {
                                         media_info.album = Some(album.title);
@@ -83,8 +95,8 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), String> {
+/*
+pub async fn poll_now_playing_l(resp: mpsc::Sender<MediaInfo>) -> Result<(), String> {
     let player = PlayerFinder::new()
         .expect("Could not connect to D-Bus")
         .find_active()
@@ -115,14 +127,19 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
                         }
 
                         if let Some(i) = track.art_url() {
+                            if let Ok(res) = reqwest::get(i).await {
+                                if let Ok(bytes) = res.bytes().await {
+                                    // use ispc_downsampler::Image;
+
+                                    // ispc_downsampler::downsample(Image::new(pixels, width, height, format), 60, 60)
+                                }
+                            }
                             artwork = None; //Some(i.to_string()); todo: fetch
                         }
 
                         let is_shuffle = player.get_shuffle().unwrap_or(false);
 
                         if let (Some(t), Some(a)) = (title, artist) {
-                            use core::task;
-
                             let media_info = MediaInfo {
                                 title: t,
                                 artist: a,
@@ -149,3 +166,5 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
 
     Ok(())
 }
+
+*/

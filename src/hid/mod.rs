@@ -1,1 +1,3 @@
-// Handle HIS comms, queuing etc
+pub fn publish_hid_event(event: Event) {
+    println!("HID Event: {}", event);
+}
