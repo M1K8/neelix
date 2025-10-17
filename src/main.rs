@@ -1,8 +1,8 @@
 use std::{collections::HashSet, fs};
 
 extern crate hidapi;
-mod device;
 mod process_watcher;
+mod now_playing;
 // fn main() {
 //     let api = hidapi::HidApi::new().unwrap();
 //     let devices = api.device_list().filter( |d| d.vendor_id() == 0xfaf0 && d.product_id() == 0xfaf0 );
@@ -38,6 +38,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let (send, recv) = tokio::sync::mpsc::channel(100);
+    let (sendMedia, mut recvMedia) = tokio::sync::mpsc::channel(100);
+
+    tokio::spawn(async move { now_playing::poll_now_playing(sendMedia).await});
+
+    while let Some(evt) = recvMedia.recv().await {
+        println!("Now Playing: {:?}", evt);
+    }
 
 
     if expected_processes.is_empty() {

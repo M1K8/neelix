@@ -1,0 +1,1 @@
+// Defien config schema - Device { vid, pid, usage_page, usage) Opening device, vid/pid:0xFAF0/0xFAF0, usagePage/usage: FF60/61

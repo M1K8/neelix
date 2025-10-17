@@ -9,3 +9,4 @@ toml = "^0.9"
 hidapi = "2.6.3"
 sysinfo = "^0"
 tokio = { version = "^1.19", features = ["full"] }
+win-gsmtc = "0.1.0"
