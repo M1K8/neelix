@@ -1,8 +1,9 @@
 use std::{collections::HashSet, fs};
 
+use neelix::background::process_watcher;
+
 extern crate hidapi;
-mod now_playing;
-mod process_watcher;
+mod background;
 // fn main() {
 //     let api = hidapi::HidApi::new().unwrap();
 //     let devices = api.device_list().filter( |d| d.vendor_id() == 0xfaf0 && d.product_id() == 0xfaf0 );
@@ -42,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (send, recv) = tokio::sync::mpsc::channel(100);
     let (send_media, mut recv_media) = tokio::sync::mpsc::channel(5);
 
-    tokio::spawn(async move { now_playing::poll_now_playing(send_media).await });
+    tokio::spawn(async move { background::now_playing::poll_now_playing(send_media).await });
 
     while let Some(evt) = recv_media.recv().await {
         println!("Now Playing: {:?}", evt);

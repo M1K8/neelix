@@ -2,7 +2,7 @@ use gsmtc::{ManagerEvent::*, SessionUpdateEvent::*};
 use image::ImageReader;
 use std::io::Cursor;
 
-use neelix::schema::MediaInfo;
+use crate::background::hid::schema::MediaInfo;
 use tokio::sync::mpsc::{self};
 
 #[cfg(target_os = "linux")]
@@ -28,7 +28,7 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
                         match evt {
                             Model(model) => {
                                 if let Some(playback) = model.playback {
-                                   let shuffle_info = MediaInfo {
+                                    let shuffle_info = MediaInfo {
                                         title: None,
                                         artist: None,
                                         album: None,
@@ -62,7 +62,6 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
                                     let e = image.to_rgba8().into_raw();
                                     println!("{}", &e.len());
                                     image_vec = Some(e);
-
                                 }
                                 if let Some(media) = model.media {
                                     let mut media_info = MediaInfo {
@@ -70,7 +69,7 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
                                         artist: Some(media.artist),
                                         is_shuffle: None,
                                         album: None,
-                                        artwork: None// image_vec,
+                                        artwork: None, // image_vec,
                                     };
                                     if let Some(album) = media.album {
                                         media_info.album = Some(album.title);

@@ -7,10 +7,21 @@ pub struct MediaInfo {
     pub artwork: Option<Vec<u8>>,
 }
 
-
 pub trait HidEvent {
     fn to_bytes(&self) -> Vec<u8>;
     fn chunks(&self) -> dyn Iterator<Item = Vec<u8>>;
 }
 
-// todo - implement state, internal q, default chunking over bytes, impl event for media to start woth
+
+const MAX_HID_EVENT_SIZE: usize = 32;
+type HidEventImpl = [u8; MAX_HID_EVENT_SIZE];
+
+const HEADER: [u8; 4] = [0xFA, 0x00, 0xF0, 0x00];
+const FOOTER: [u8; 4] = [0xAF, 0x00, 0x0F, 0x00];
+
+
+enum EventType {
+MediaUpdate = 0x01,
+ProcessStateUpdate = 0x02,
+PCUpdate = 0x03,
+}
