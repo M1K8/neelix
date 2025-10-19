@@ -3,19 +3,29 @@ name = "neelix"
 version = "0.1.0"
 edition = "2024"
 
+
+[features]
+default = ["std"]
+std = ["serde", "toml", "hidapi", "sysinfo", "tokio", "ispc-downsampler", "image", "win-gsmtc", "mpris", "reqwest"]  
+
+
 [dependencies]
-serde = {version = "^1.0", features = ["derive"]}
-toml = "^0.9"
-hidapi = "2.6.3"
-sysinfo = "^0"
-tokio = { version = "^1.19", features = ["full"] }
-ispc-downsampler = "0.4.0"
-image = "0.25.8"
+serde = {version = "^1.0", features = ["derive"], optional = true}
+toml = { version = "^0.9" , optional = true}
+hidapi = {version = "2.6.3" , optional = true}
+sysinfo = {version = "^0" , optional = true}
+tokio = { version = "^1.19", features = ["full"] ,optional = true}
+ispc-downsampler = {version = "0.4.0" , optional = true}
+image =  {version = "0.25.8" , optional = true}
 
 
 [target.'cfg(windows)'.dependencies]
-win-gsmtc = "0.1.0"
+win-gsmtc = {version = "0.1.0" , optional = true}
 
 [target.'cfg(linux)'.dependencies]
-mpris = "2.0.1"
-reqwest = "0.12.24"
+mpris = {version = "2.0.1" , optional = true}
+reqwest = {version = "0.12.24", features = ["blocking"], optional = true}
+
+[target.'cfg(unix)'.dependencies]
+mpris = {version = "2.0.1" , optional = true}
+reqwest = {version = "0.12.24", features = ["blocking"], optional = true}

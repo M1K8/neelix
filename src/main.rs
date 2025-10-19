@@ -1,25 +1,11 @@
 use std::{collections::HashSet, fs};
 
-use neelix::background::process_watcher;
+use crate::background::process_watcher;
 
 extern crate hidapi;
 mod background;
-// fn main() {
-//     let api = hidapi::HidApi::new().unwrap();
-//     let devices = api.device_list().filter( |d| d.vendor_id() == 0xfaf0 && d.product_id() == 0xfaf0 );
-//     let mut indx: u8 = 0;
-//     for device in devices {
-//         let path = device.path();
-//         println!("{:#x} {:#x} {}", device.product_id(), device.vendor_id(), path.to_str().unwrap());
-//         let device = api.open_path(path).unwrap();
-//         if let Err(err) = device.write(&['a' as u8, 'b' as u8, 'c' as u8, 'd' as u8, 'e' as u8, 'f' as u8, 'g' as u8, 'h' as u8]) {
-//             eprintln!("Error for device {}: {}", indx,  err);
-//                 indx +=1;
-//             continue;
-//         }
-
-//     }
-// }
+mod nostd_types;
+mod types;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
