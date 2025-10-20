@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fs};
 
-use crate::background::process_watcher;
+use crate::background::{hid, process_watcher};
 
 extern crate hidapi;
 mod background;
@@ -13,6 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config: toml::Value = toml::from_str(&config_contents)?;
 
     println!("Config: {:?}", config);
+    let hid = hid::HidHandler::new(0xfaf0, 0xfaf0).expect("Failed to initialize HID handler");
 
     let expected_processes = if let Some(processes) = config.get("recognised_processes") {
         processes
@@ -32,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move { background::now_playing::poll_now_playing(send_media).await });
 
     while let Some(evt) = recv_media.recv().await {
-        println!("Now Playing: {:?}", evt);
+        hid.publish_hid_event(evt);
     }
 
     if expected_processes.is_empty() {

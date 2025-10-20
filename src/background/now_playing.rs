@@ -1,4 +1,4 @@
-use crate::nostd_types::EventType;
+use crate::nostd_types::{EventType, FOOTER, HEADER};
 use crate::types::HidEvent;
 use image::ImageReader;
 use std::{fmt::Display, io::Cursor, sync::Arc};
@@ -76,17 +76,25 @@ impl HidEvent for MediaInfo {
             }
 
             if ctr == 0 {
-                chunk.extend_from_slice(&[0xFA, 0x00, 0xF0]); // Header
-                chunk.extend_from_slice(&[EventType::MediaUpdate as u8]);
+                chunk.extend_from_slice(&HEADER); // Header
+                if self.title.is_some() {
+                    chunk.extend_from_slice(&[EventType::MediaUpdate as u8]);
+                } else {
+                    chunk.extend_from_slice(&[EventType::MediaUpdateShufflePlay as u8]);
+                }
             }
             let end = std::cmp::min(offset + chunk_size, bytes.len());
             chunk.extend_from_slice(&bytes[offset..end]);
 
             if offset + chunk_size >= bytes.len() {
                 chunk.extend_from_slice(&bytes[offset..end]);
-                chunk.extend_from_slice(&[0xAF, 0x00, 0x0F, 0x00]); // Footer
+                chunk.extend_from_slice(&FOOTER); // Footer
                 chunks.push(chunk);
                 break;
+            }
+
+            if chunk.len() < 32 {
+                chunk.resize(32, 0);
             }
             chunks.push(chunk);
             offset += chunk_size;
@@ -129,10 +137,17 @@ pub async fn poll_now_playing(resp: mpsc::Sender<Arc<dyn HidEvent>>) -> Result<(
                 } => {
                     println!("Created session: {{id={session_id}, source={source}}}");
                     let mut last_touched: i64 = 0;
+                    let mut last_touched_s: i64 = 0;
                     while let Some(evt) = rx.recv().await {
                         let mut image_vec: Option<Vec<u8>> = None;
                         match evt {
                             Model(model) => {
+                                if let Some(timelime) = model.timeline {
+                                    if timelime.last_updated_at_ms == last_touched_s {
+                                        continue; // we see event duplication, so account for that here.
+                                    }
+                                    last_touched_s = timelime.last_updated_at_ms;
+                                }
                                 if let Some(playback) = model.playback {
                                     let shuffle_info = MediaInfo {
                                         title: None,
@@ -141,6 +156,7 @@ pub async fn poll_now_playing(resp: mpsc::Sender<Arc<dyn HidEvent>>) -> Result<(
                                         is_shuffle: Some(playback.shuffle),
                                         artwork: None,
                                     };
+                                    println!("{source}] Now Shuff: {shuffle_info}");
                                     resp.send(Arc::new(shuffle_info)).await.ok();
                                 }
                             }
@@ -175,11 +191,12 @@ pub async fn poll_now_playing(resp: mpsc::Sender<Arc<dyn HidEvent>>) -> Result<(
                                         artist: Some(media.artist),
                                         is_shuffle: None,
                                         album: None,
-                                        artwork: image_vec,
+                                        artwork: None, //image_vec,
                                     };
                                     if let Some(album) = media.album {
                                         media_info.album = Some(album.title);
                                     }
+                                    println!("{source}] Now Playing: {media_info}");
                                     resp.send(Arc::new(media_info)).await.ok();
                                 }
                             }

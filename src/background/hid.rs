@@ -1,6 +1,7 @@
 use crate::nostd_types::*;
 use crate::types::*;
 use std::error;
+use std::sync::Arc;
 
 pub struct HidHandler {
     device: hidapi::HidDevice,
@@ -24,40 +25,13 @@ impl HidHandler {
         None
     }
 
-    pub fn publish_hid_event(&self, event: impl HidEvent) {
-        let bytes = event.to_bytes();
-        let mut offset = 0;
-
-        while offset < bytes.len() {
-            let mut chunk: HidEventImpl = [0; MAX_HID_EVENT_SIZE];
-            let mut cursor = 0;
-
-            // Add header
-            for &b in &HEADER {
-                chunk[cursor] = b;
-                cursor += 1;
-            }
-
-            // Add event type
-            chunk[cursor] = event.event_type() as u8;
-            cursor += 1;
-
-            // Add data
-            while cursor < MAX_HID_EVENT_SIZE - FOOTER.len() && offset < bytes.len() {
-                chunk[cursor] = bytes[offset];
-                cursor += 1;
-                offset += 1;
-            }
-
-            // Add footer
-            for &b in &FOOTER {
-                chunk[cursor] = b;
-                cursor += 1;
-            }
-
-            // Send chunk to HID device
-            if let Err(e) = self.send_to_hid_device(&chunk) {
-                panic!("Failed to send HID event: {}", e);
+    pub fn publish_hid_event(&self, event: Arc<dyn HidEvent>) {
+        let bytes = event.chunks();
+        for mut chunk in bytes {
+            let mut c = [0 as u8; 32];
+            c[..chunk.len()].swap_with_slice(chunk.as_mut_slice());
+            if let Err(e) = self.send_to_hid_device(&c) {
+                eprintln!("Error sending HID event: {}", e);
             }
         }
     }
