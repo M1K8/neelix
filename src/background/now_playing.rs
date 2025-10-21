@@ -19,6 +19,8 @@ pub struct MediaInfo {
     pub artwork: Option<Vec<u8>>,
 }
 
+const SPLIT_CHAR: u8 = '\n' as u8;
+
 impl Display for MediaInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -42,19 +44,19 @@ impl HidEvent for MediaInfo {
         if let Some(title) = &self.title {
             bytes.extend_from_slice(title.as_bytes());
         }
-        bytes.push('|' as u8); // 124
+        bytes.push(SPLIT_CHAR);
         if let Some(artist) = &self.artist {
             bytes.extend_from_slice(artist.as_bytes());
         }
-        bytes.push('|' as u8); // 124
+        bytes.push(SPLIT_CHAR);
         if let Some(album) = &self.album {
             bytes.extend_from_slice(album.as_bytes());
         }
-        bytes.push('|' as u8); // 124
+        bytes.push(SPLIT_CHAR);
         if let Some(is_shuffle) = self.is_shuffle {
             bytes.push(if is_shuffle { 1 } else { 0 });
         }
-        bytes.push('|' as u8); // 124
+        bytes.push(SPLIT_CHAR);
         if let Some(artwork) = &self.artwork {
             bytes.extend_from_slice(artwork);
         }
@@ -62,44 +64,33 @@ impl HidEvent for MediaInfo {
     }
 
     fn chunks(&self) -> Vec<Vec<u8>> {
-        let bytes = self.to_bytes();
+        let buffer = self.to_bytes();
         let chunk_size = 32; // Adjusted for header/footer
         let mut offset = 0;
         let mut chunks = Vec::new();
-        let mut ctr = 0;
-        while offset < bytes.len() {
-            let mut chunk_size = chunk_size;
+        let mut header_chunk = Vec::new();
+        header_chunk.extend_from_slice(&HEADER); // Header
+        if self.title.is_some() {
+            header_chunk.extend_from_slice(&[EventType::MediaUpdate as u8]);
+        } else {
+            header_chunk.extend_from_slice(&[EventType::MediaUpdateShufflePlay as u8]);
+        }
+        chunks.push(header_chunk);
+        while offset < buffer.len() {
             let mut chunk = Vec::new();
 
-            if ctr == 0 || offset + chunk_size >= bytes.len() {
-                chunk_size -= 4; // Adjust for header/footer
-            }
-
-            if ctr == 0 {
-                chunk.extend_from_slice(&HEADER); // Header
-                if self.title.is_some() {
-                    chunk.extend_from_slice(&[EventType::MediaUpdate as u8]);
-                } else {
-                    chunk.extend_from_slice(&[EventType::MediaUpdateShufflePlay as u8]);
-                }
-            }
-            let end = std::cmp::min(offset + chunk_size, bytes.len());
-            chunk.extend_from_slice(&bytes[offset..end]);
-
-            if offset + chunk_size >= bytes.len() {
-                chunk.extend_from_slice(&bytes[offset..end]);
-                chunk.extend_from_slice(&FOOTER); // Footer
-                chunks.push(chunk);
-                break;
-            }
-
+            let end = std::cmp::min(offset + chunk_size, buffer.len());
+            chunk.extend_from_slice(&buffer[offset..end]);
             if chunk.len() < 32 {
                 chunk.resize(32, 0);
             }
             chunks.push(chunk);
             offset += chunk_size;
-            ctr += 1;
         }
+        let mut footer_chunk = Vec::new();
+        footer_chunk.extend_from_slice(&FOOTER);
+        chunks.push(footer_chunk);
+
         chunks
     }
 
@@ -137,29 +128,9 @@ pub async fn poll_now_playing(resp: mpsc::Sender<Arc<dyn HidEvent>>) -> Result<(
                 } => {
                     println!("Created session: {{id={session_id}, source={source}}}");
                     let mut last_touched: i64 = 0;
-                    let mut last_touched_s: i64 = 0;
                     while let Some(evt) = rx.recv().await {
                         let mut image_vec: Option<Vec<u8>> = None;
                         match evt {
-                            Model(model) => {
-                                if let Some(timelime) = model.timeline {
-                                    if timelime.last_updated_at_ms == last_touched_s {
-                                        continue; // we see event duplication, so account for that here.
-                                    }
-                                    last_touched_s = timelime.last_updated_at_ms;
-                                }
-                                if let Some(playback) = model.playback {
-                                    let shuffle_info = MediaInfo {
-                                        title: None,
-                                        artist: None,
-                                        album: None,
-                                        is_shuffle: Some(playback.shuffle),
-                                        artwork: None,
-                                    };
-                                    println!("{source}] Now Shuff: {shuffle_info}");
-                                    resp.send(Arc::new(shuffle_info)).await.ok();
-                                }
-                            }
                             Media(model, image) => {
                                 if let Some(timelime) = model.timeline {
                                     if timelime.last_updated_at_ms == last_touched {
@@ -199,7 +170,8 @@ pub async fn poll_now_playing(resp: mpsc::Sender<Arc<dyn HidEvent>>) -> Result<(
                                     println!("{source}] Now Playing: {media_info}");
                                     resp.send(Arc::new(media_info)).await.ok();
                                 }
-                            }
+                            },
+                            _ => {}
                         }
                     }
                     println!("{source}] exited event-loop");

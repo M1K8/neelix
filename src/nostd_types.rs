@@ -1,3 +1,4 @@
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum EventType {
     None = 0x0,
     MediaUpdate = 0x01,

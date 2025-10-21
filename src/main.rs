@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move { background::now_playing::poll_now_playing(send_media).await });
 
     while let Some(evt) = recv_media.recv().await {
-        hid.publish_hid_event(evt);
+        hid.publish_hid_event(evt).await;
     }
 
     if expected_processes.is_empty() {

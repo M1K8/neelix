@@ -25,7 +25,10 @@ impl HidHandler {
         None
     }
 
-    pub fn publish_hid_event(&self, event: Arc<dyn HidEvent>) {
+    pub async fn publish_hid_event(&self, event: Arc<dyn HidEvent>) {
+        if event.event_type() == EventType::MediaUpdateShufflePlay {
+            return;
+        }
         let bytes = event.chunks();
         for mut chunk in bytes {
             let mut c = [0 as u8; 32];
@@ -33,13 +36,21 @@ impl HidHandler {
             if let Err(e) = self.send_to_hid_device(&c) {
                 eprintln!("Error sending HID event: {}", e);
             }
+            //tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
     fn send_to_hid_device(&self, chunk: &HidEventImpl) -> Result<usize, Box<dyn error::Error>> {
         // Placeholder for actual HID device communication
-        println!("Sending chunk to HID device: {:?}", chunk);
+        println!("Sending chunk to HID device: {:?}, {}", chunk, chunk.len());
+        // handle report ID
+        let out: [u8; 33] = {
+            let mut new = [0u8; 33];
+            new[1..].copy_from_slice(chunk);
+            new
+        };
+
         self.device
-            .write(chunk)
+            .write(&out)
             .map_err(|e| Box::new(e) as Box<dyn error::Error>)
     }
 }
