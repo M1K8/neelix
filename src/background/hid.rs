@@ -1,47 +1,50 @@
 use crate::nostd_types::*;
 use crate::types::*;
-use std::error;
 use std::sync::Arc;
 
 pub struct HidHandler {
     device: hidapi::HidDevice,
+    vid: u16,
+    pid: u16,
+}
+fn new_device(vid: u16, pid: u16) -> Option<hidapi::HidDevice> {
+    let api = hidapi::HidApi::new().unwrap();
+    let devices = api
+        .device_list()
+        .filter(|d| d.vendor_id() == vid && d.product_id() == pid);
+    for device in devices {
+        let path = device.path();
+        let device = api.open_path(path).unwrap();
+        if let Err(_err) = device.write(&[0]) {
+            continue;
+        } else {
+            return Some(device);
+        }
+    }
+    None
 }
 
 impl HidHandler {
     pub fn new(vid: u16, pid: u16) -> Option<Self> {
-        let api = hidapi::HidApi::new().unwrap();
-        let devices = api
-            .device_list()
-            .filter(|d| d.vendor_id() == vid && d.product_id() == pid);
-        for device in devices {
-            let path = device.path();
-            let device = api.open_path(path).unwrap();
-            if let Err(_err) = device.write(&[0]) {
-                continue;
-            } else {
-                return Some(HidHandler { device });
-            }
+        if let Some(device) = new_device(vid, pid) {
+            return Some(HidHandler { device, vid, pid });
         }
         None
     }
 
-    pub async fn publish_hid_event(&self, event: Arc<dyn HidEvent>) {
+    pub async fn publish_hid_event(&mut self, event: Arc<dyn HidEvent>) {
         if event.event_type() == EventType::MediaUpdateShufflePlay {
             return;
         }
+
         let bytes = event.chunks();
         for mut chunk in bytes {
             let mut c = [0 as u8; 32];
             c[..chunk.len()].swap_with_slice(chunk.as_mut_slice());
-            if let Err(e) = self.send_to_hid_device(&c) {
-                eprintln!("Error sending HID event: {}", e);
-            }
-            //tokio::time::sleep(Duration::from_millis(5)).await;
+            self.send_to_hid_device(&c);
         }
     }
-    fn send_to_hid_device(&self, chunk: &HidEventImpl) -> Result<usize, Box<dyn error::Error>> {
-        // Placeholder for actual HID device communication
-        println!("Sending chunk to HID device: {:?}, {}", chunk, chunk.len());
+    fn send_to_hid_device(&mut self, chunk: &HidEventImpl) -> Option<usize> {
         // handle report ID
         let out: [u8; 33] = {
             let mut new = [0u8; 33];
@@ -49,8 +52,14 @@ impl HidHandler {
             new
         };
 
-        self.device
-            .write(&out)
-            .map_err(|e| Box::new(e) as Box<dyn error::Error>)
+        while let Err(e) = self.device.write(&out) {
+            eprintln!("Error sending to device, trying to recreate: {:?}", e);
+            if let Some(d) = new_device(self.vid, self.pid) {
+                self.device = d;
+            } else {
+                Some(1);
+            }
+        }
+        None
     }
 }

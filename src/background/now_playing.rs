@@ -1,14 +1,17 @@
+use crate::background::SPLIT_CHAR;
 use crate::nostd_types::{EventType, FOOTER, HEADER};
 use crate::types::HidEvent;
 use image::ImageReader;
-use std::{fmt::Display, io::Cursor, sync::Arc};
 use tokio::sync::mpsc::{self};
-
-#[cfg(target_os = "linux")]
-use mpris::PlayerFinder;
 
 #[cfg(target_os = "windows")]
 use gsmtc::{ManagerEvent::*, SessionUpdateEvent::*};
+
+#[cfg(target_os = "linux")]
+use mpris::PlayerFinder;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use std::{fmt::Display, io::Cursor, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub struct MediaInfo {
@@ -18,8 +21,6 @@ pub struct MediaInfo {
     pub is_shuffle: Option<bool>,
     pub artwork: Option<Vec<u8>>,
 }
-
-const SPLIT_CHAR: u8 = '\n' as u8;
 
 impl Display for MediaInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -49,9 +50,9 @@ impl HidEvent for MediaInfo {
             bytes.extend_from_slice(artist.as_bytes());
         }
         bytes.push(SPLIT_CHAR);
-        if let Some(album) = &self.album {
-            bytes.extend_from_slice(album.as_bytes());
-        }
+        // if let Some(album) = &self.album {
+        //     bytes.extend_from_slice(album.as_bytes());
+        // }
         bytes.push(SPLIT_CHAR);
         if let Some(is_shuffle) = self.is_shuffle {
             bytes.push(if is_shuffle { 1 } else { 0 });
@@ -65,7 +66,7 @@ impl HidEvent for MediaInfo {
 
     fn chunks(&self) -> Vec<Vec<u8>> {
         let buffer = self.to_bytes();
-        let chunk_size = 32; // Adjusted for header/footer
+        let chunk_size = 32;
         let mut offset = 0;
         let mut chunks = Vec::new();
         let mut header_chunk = Vec::new();
@@ -97,101 +98,100 @@ impl HidEvent for MediaInfo {
     fn event_type(&self) -> crate::nostd_types::EventType {
         crate::nostd_types::EventType::MediaUpdate
     }
-
-    fn from_bytes(bytes: &[u8]) -> Self
-    where
-        Self: Sized,
-    {
-        MediaInfo {
-            title: None,
-            artist: None,
-            album: None,
-            is_shuffle: None,
-            artwork: Some(bytes.to_vec()),
-        }
-    }
 }
 
 #[cfg(target_os = "windows")]
-pub async fn poll_now_playing(resp: mpsc::Sender<Arc<dyn HidEvent>>) -> Result<(), String> {
-    let rx = gsmtc::SessionManager::create().await;
-    if let Err(err) = rx {
-        return Err(err.message().to_string());
-    } else {
-        let mut rx = rx.unwrap();
-        while let Some(evt) = rx.recv().await {
-            match evt {
-                SessionCreated {
-                    session_id,
-                    mut rx,
-                    source,
-                } => {
-                    println!("Created session: {{id={session_id}, source={source}}}");
-                    let mut last_touched: i64 = 0;
-                    while let Some(evt) = rx.recv().await {
-                        let mut image_vec: Option<Vec<u8>> = None;
-                        match evt {
-                            Media(model, image) => {
-                                if let Some(timelime) = model.timeline {
-                                    if timelime.last_updated_at_ms == last_touched {
-                                        continue; // we see event duplication, so account for that here.
+pub async fn poll_now_playing(
+    resp: mpsc::Sender<Arc<dyn HidEvent>>,
+    shutting_down: Arc<AtomicBool>,
+) {
+    loop {
+        if shutting_down.load(Ordering::Relaxed) {
+            break;
+        }
+        let rx = gsmtc::SessionManager::create().await;
+        if let Err(_) = rx {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            continue;
+        } else {
+            let mut rx = rx.unwrap();
+            while let Some(evt) = rx.recv().await {
+                match evt {
+                    SessionCreated {
+                        session_id,
+                        mut rx,
+                        source,
+                    } => {
+                        let mut last_touched: i64 = 0;
+                        while let Some(evt) = rx.recv().await {
+                            let mut _image_vec: Option<Vec<u8>> = None;
+                            match evt {
+                                Media(model, image) => {
+                                    if let Some(timelime) = model.timeline {
+                                        if timelime.last_updated_at_ms == last_touched {
+                                            continue; // we see event duplication, so account for that here.
+                                        }
+                                        last_touched = timelime.last_updated_at_ms;
                                     }
-                                    last_touched = timelime.last_updated_at_ms;
-                                }
-                                if let Some(image) = image {
-                                    let cursor = Cursor::new(&image.data);
-                                    let Ok(img_reader) =
-                                        ImageReader::new(cursor).with_guessed_format()
-                                    else {
-                                        println!("Could not read image data");
-                                        continue;
-                                    };
-                                    let Ok(mut image) = img_reader.decode() else {
-                                        println!("Could not decode image data");
-                                        continue;
-                                    };
+                                    if let Some(image) = image {
+                                        let cursor = Cursor::new(&image.data);
+                                        let Ok(img_reader) =
+                                            ImageReader::new(cursor).with_guessed_format()
+                                        else {
+                                            //println!("Could not read image data");
+                                            continue;
+                                        };
+                                        let Ok(mut image) = img_reader.decode() else {
+                                            //println!("Could not decode image data");
+                                            continue;
+                                        };
 
-                                    image = image.thumbnail(50, 50);
-                                    let e = image.to_rgba8().into_raw();
-                                    println!("{}", &e.len());
-                                    image_vec = Some(e);
-                                }
-                                if let Some(media) = model.media {
-                                    let mut media_info = MediaInfo {
-                                        title: Some(media.title),
-                                        artist: Some(media.artist),
-                                        is_shuffle: None,
-                                        album: None,
-                                        artwork: None, //image_vec,
-                                    };
-                                    if let Some(album) = media.album {
-                                        media_info.album = Some(album.title);
+                                        image = image.thumbnail(50, 50);
+                                        let e = image.to_rgba8().into_raw();
+
+                                        _image_vec = Some(e);
                                     }
-                                    println!("{source}] Now Playing: {media_info}");
-                                    resp.send(Arc::new(media_info)).await.ok();
+                                    if let Some(media) = model.media {
+                                        let mut media_info = MediaInfo {
+                                            title: Some(latinrs::encode_str(&media.title)),
+                                            artist: Some(latinrs::encode_str(&media.artist)),
+                                            is_shuffle: None,
+                                            album: None,
+                                            artwork: None, //image_vec,
+                                        };
+                                        if let Some(album) = media.album {
+                                            media_info.album =
+                                                Some(latinrs::encode_str(&album.title));
+                                        }
+                                        resp.send(Arc::new(media_info)).await.ok();
+                                    }
                                 }
-                            },
-                            _ => {}
+                                _ => {}
+                            }
                         }
+                        println!("{source}] exited event-loop");
                     }
-                    println!("{source}] exited event-loop");
+                    SessionRemoved { session_id } => {
+                        println!("Session {{id={session_id}}} was removed")
+                    }
+                    CurrentSessionChanged {
+                        session_id: Some(id),
+                    } => println!("Current session: {id}"),
+                    CurrentSessionChanged { session_id: None } => {
+                        println!("No more current session")
+                    }
                 }
-                SessionRemoved { session_id } => {
-                    println!("Session {{id={session_id}}} was removed")
-                }
-                CurrentSessionChanged {
-                    session_id: Some(id),
-                } => println!("Current session: {id}"),
-                CurrentSessionChanged { session_id: None } => println!("No more current session"),
             }
         }
     }
-    Ok(())
 }
 
 //redo as yersterday
 #[cfg(target_os = "linux")]
-pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), String> {
+pub async fn poll_now_playing(
+    resp: mpsc::Sender<Arc<MediaInfo>>,
+    shutting_down: Arc<AtomicBool>,
+) -> Result<(), String> {
     let player = PlayerFinder::new()
         .expect("Could not connect to D-Bus")
         .find_active()
@@ -200,6 +200,9 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
     let events = player.events().expect("Could not start event stream");
 
     for event in events {
+        if shutting_down.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         match event {
             Ok(event) => match event {
                 mpris::Event::TrackChanged(track) => {
@@ -209,7 +212,7 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
                     let mut artwork = Option::None;
 
                     if let Some(t) = track.track_id() {
-                        title = Some(t.to_string());
+                        title = Some(latinrs::encode_str(&t.to_string()));
                     }
 
                     if let Some(a) = track.album_artists() {
@@ -255,7 +258,7 @@ pub async fn poll_now_playing(resp: mpsc::Sender<MediaInfo>) -> Result<(), Strin
                             };
                             let resp = resp.clone();
 
-                            resp.blocking_send(media_info).unwrap();
+                            resp.blocking_send(Arc::new(media_info)).unwrap();
                         });
                     }
                 }
