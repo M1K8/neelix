@@ -1,4 +1,4 @@
-use crate::background::SPLIT_CHAR;
+use crate::background::{SPLIT_CHAR, qgf_art};
 use crate::nostd_types::{EventType, FOOTER, HEADER};
 use crate::types::HidEvent;
 use image::ImageReader;
@@ -20,18 +20,24 @@ pub struct MediaInfo {
     pub album: Option<String>,
     pub is_shuffle: Option<bool>,
     pub artwork: Option<Vec<u8>>,
+    /// QGF-encoded album art built via the qmk-qgf crate; not transmitted yet.
+    pub artwork_qgf: Option<Vec<u8>>,
 }
 
 impl Display for MediaInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "MediaInfo {{ title: {:?}, artist: {:?}, album: {:?}, is_shuffle: {:?}, artwork: [{} bytes] }}",
+            "MediaInfo {{ title: {:?}, artist: {:?}, album: {:?}, is_shuffle: {:?}, artwork: [{} bytes], artwork_qgf: [{} bytes] }}",
             self.title,
             self.artist,
             self.album,
             self.is_shuffle,
             match &self.artwork {
+                Some(art) => art.len(),
+                None => 0,
+            },
+            match &self.artwork_qgf {
                 Some(art) => art.len(),
                 None => 0,
             }
@@ -125,6 +131,7 @@ pub async fn poll_now_playing(
                         let mut last_touched: i64 = 0;
                         while let Some(evt) = rx.recv().await {
                             let mut _image_vec: Option<Vec<u8>> = None;
+                            let mut artwork_qgf: Option<Vec<u8>> = None;
                             match evt {
                                 Media(model, image) => {
                                     if let Some(timelime) = model.timeline {
@@ -147,6 +154,7 @@ pub async fn poll_now_playing(
                                         };
 
                                         image = image.thumbnail(50, 50);
+                                        artwork_qgf = qgf_art::image_to_qgf(&image).ok();
                                         let e = image.to_rgba8().into_raw();
 
                                         _image_vec = Some(e);
@@ -158,6 +166,7 @@ pub async fn poll_now_playing(
                                             is_shuffle: None,
                                             album: None,
                                             artwork: None, //image_vec,
+                                            artwork_qgf,
                                         };
                                         if let Some(album) = media.album {
                                             media_info.album =
@@ -210,6 +219,7 @@ pub async fn poll_now_playing(
                     let mut artist = Option::None;
                     let mut album = Option::None;
                     let mut artwork = Option::None;
+                    let mut artwork_qgf = Option::None;
 
                     if let Some(t) = track.track_id() {
                         title = Some(latinrs::encode_str(&t.to_string()));
@@ -243,6 +253,7 @@ pub async fn poll_now_playing(
                                     };
 
                                     image = image.thumbnail(50, 50);
+                                    artwork_qgf = qgf_art::image_to_qgf(&image).ok();
                                     let e = image.to_rgba8().into_raw();
                                     println!("{}", &e.len());
                                     artwork = Some(e);
@@ -255,6 +266,7 @@ pub async fn poll_now_playing(
                                 album: album,
                                 is_shuffle: Some(is_shuffle),
                                 artwork,
+                                artwork_qgf,
                             };
                             let resp = resp.clone();
 

@@ -1,4 +1,4 @@
-use crate::background::SPLIT_CHAR;
+use crate::background::{SPLIT_CHAR, qgf_art};
 use crate::nostd_types::FOOTER;
 use crate::nostd_types::HEADER;
 use std::collections::HashMap;
@@ -20,6 +20,10 @@ pub struct Process {
     pub pid: u16,
     pub is_running: bool,
     pub metadata: Option<HashMap<String, String>>,
+    /// QGF-encoded process icon (from `icons/<stem>.ico`) built via the
+    /// qmk-qgf crate; not transmitted yet.
+    #[serde(skip)]
+    pub icon_qgf: Option<Vec<u8>>,
 }
 
 impl HidEvent for Process {
@@ -91,11 +95,13 @@ pub async fn process_watcher(
                         let name = name.to_owned();
                         seen_this_cycle.insert(name.clone());
 
+                        let icon_qgf = qgf_art::process_icon_qgf(&name);
                         chan.send(Arc::new(Process {
                             name,
                             pid: index as u16,
                             is_running: true,
                             metadata: None,
+                            icon_qgf,
                         }))
                         .await
                         .unwrap();
@@ -120,6 +126,7 @@ pub async fn process_watcher(
                     pid: index as u16,
                     is_running: false,
                     metadata: None,
+                    icon_qgf: None,
                 }))
                 .await
                 .unwrap();

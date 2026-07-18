@@ -29,7 +29,8 @@ std = [
     "anyhow",
     "lazy_static",
     "thiserror",
-    "color_quant"
+    "color_quant",
+    "qmk-qgf"
     ]
 
 
@@ -53,6 +54,7 @@ futures-util = {version = "0.3.31", optional = true}
 serde_json = {version = "1.0.145", optional = true}
 thiserror = { version = "2.0.17", optional = true }
 color_quant = { version = "1.1.0", optional = true }
+qmk-qgf = { git = "https://github.com/M1K8/qmk-qgf-rs", branch = "main", optional = true }
 
 
 gpui = { version = "0.2.2", optional = true }

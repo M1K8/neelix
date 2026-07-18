@@ -5144,6 +5144,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "qmk-qgf"
+version = "0.1.0"
+source = "git+https://github.com/M1K8/qmk-qgf-rs?branch=main#c4cb8fad744b6fe7bdeba4a8cac11afccfcf1086"
+dependencies = [
+ "png 0.17.16",
+]
+
+[[package]]
 name = "qoi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6216,6 +6224,7 @@ dependencies = [
  "latinrs",
  "lazy_static",
  "mpris",
+ "qmk-qgf",
  "reqwest",
  "serde",
  "serde_json",
