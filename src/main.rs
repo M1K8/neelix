@@ -5,10 +5,11 @@ use lazy_static::lazy_static;
 use slipstream::background::{self, hid, pc_stats::PCState, process_watcher};
 use slipstream::config::Config;
 use slipstream::ui::dialog::show_error_dialog;
+use std::ffi::OsStr;
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use sysinfo::System;
+use sysinfo::{ProcessesToUpdate, System};
 use tao::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
@@ -49,6 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
+    let ts_api_key = ts_api_key.unwrap();
+
     let device = match config.devices.first() {
         Some(dev) => dev,
         None => {
@@ -60,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let mut hid = match hid::HidHandler::new(device.vid, device.pid) {
+    let mut hid = match hid::HidHandler::new(device.vid, device.pid).await {
         Some(hid) => hid,
         None => {
             let _ = show_error_dialog(
@@ -86,49 +89,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutting_down = Arc::new(AtomicBool::new(false));
 
     // Spawn background tasks
-    let scl = send_events.clone();
-    let sd1 = shutting_down.clone();
-    tokio::spawn(async move { background::now_playing::poll_now_playing(scl, sd1).await });
+    let send_events_1 = send_events.clone();
+    let shutting_down_1 = shutting_down.clone();
+    tokio::spawn(async move {
+        background::now_playing::poll_now_playing(send_events_1, shutting_down_1).await
+    });
 
-    let scl2 = send_events.clone();
+    let send_events_2 = send_events.clone();
     let mut pc_state = PCState::init();
     let system = Arc::new(Mutex::new(System::new()));
-    let sys_cl = system.clone();
-    let sd2 = shutting_down.clone();
-    tokio::spawn(async move { pc_state.poll_pc_stats(sys_cl, scl2, sd2).await });
 
+    check_if_im_running(system.clone()).await;
+
+    let sys_cl = system.clone();
+    let shutting_down_2 = shutting_down.clone();
+    tokio::spawn(async move {
+        pc_state
+            .poll_pc_stats(sys_cl, send_events_2, shutting_down_2)
+            .await
+    });
+
+    let proc_watcher = process_watcher::ProcessWatcher::new();
     if !expected_processes.is_empty() {
-        let scl3 = send_events.clone();
+        let send_events_3 = send_events.clone();
         let sys = system.clone();
-        let sd3 = shutting_down.clone();
-        tokio::spawn(async move {
-            process_watcher::process_watcher(sys, expected_processes, scl3, sd3).await
-        });
+        let shutting_down_3 = shutting_down.clone();
+        proc_watcher.watch(sys, expected_processes, send_events_3, shutting_down_3);
     }
 
     // HID event handler
-    let sd4 = shutting_down.clone();
+    let shutting_down_4 = shutting_down.clone();
     tokio::spawn(async move {
         while let Some(evt) = recv_events.recv().await {
-            if sd4.load(Ordering::Relaxed) {
+            if shutting_down_4.load(Ordering::Relaxed) {
                 break;
             }
-            hid.publish_hid_event(evt).await;
+            if !hid.publish_hid_event(evt).await {
+                // Device is gone and could not be re-opened
+                shutting_down_4.store(true, Ordering::Relaxed);
+                break;
+            }
         }
     });
 
     // TS6 event handler
-    let sd5: Arc<AtomicBool> = shutting_down.clone();
+    let shutting_down_5: Arc<AtomicBool> = shutting_down.clone();
     tokio::spawn(async move {
-        background::ts6::poll_teamspeak(send_events, sd5, ts_api_key, self_name).await
+        background::ts6::poll_teamspeak(
+            send_events,
+            shutting_down_5,
+            &ts_api_key,
+            self_name,
+            &proc_watcher,
+        )
+        .await
     });
 
-    // Run tao event loop on a separate thread
-    let shutting_down_clone = shutting_down.clone();
-
-    run_event_loop(shutting_down_clone);
+    // Run tao event loop
+    run_event_loop(shutting_down);
 
     Ok(())
+}
+
+async fn check_if_im_running(system: Arc<Mutex<System>>) {
+    let mut sys = system.lock().await;
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    let count = sys.processes_by_name(OsStr::new("slipstream.exe")).count();
+    let count2 = sys.processes_by_name(OsStr::new("neelix.exe")).count();
+    if count + count2 > 1 {
+        let title = "slipstream: Already Running";
+        let message = "Another instance of slipstream is already running. Please close it before starting a new one.";
+        let _ = show_error_dialog(title, message);
+        std::process::exit(1);
+    }
 }
 
 fn run_event_loop(shutting_down: Arc<AtomicBool>) {
@@ -137,7 +170,7 @@ fn run_event_loop(shutting_down: Arc<AtomicBool>) {
     // Create an invisible window (required for tray to work properly)
     let _window = WindowBuilder::new()
         .with_visible(false)
-        .with_title("neelix")
+        .with_title("Slipstream QMK Daemon")
         .build(&event_loop)
         .unwrap();
 
@@ -157,7 +190,7 @@ fn run_event_loop(shutting_down: Arc<AtomicBool>) {
     // Build tray icon
     let _tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
-        .with_tooltip("neelix")
+        .with_tooltip("Slipstream QMK Daemon")
         .with_icon(icon)
         .build()
         .unwrap();
@@ -165,17 +198,22 @@ fn run_event_loop(shutting_down: Arc<AtomicBool>) {
     // Run event loop (takes 3 args: event, event_loop_window_target, control_flow)
     event_loop.run(move |event, _elwt, control_flow| {
         let quit_id = quit_item.id();
-        *control_flow = ControlFlow::Wait;
 
         // Check for tray menu events
-        if !shutting_down.load(Ordering::Relaxed) {
-            if let Ok(menu_event) = MenuEvent::receiver().try_recv() {
-                if menu_event.id() == quit_id {
-                    println!("Quit clicked from tray menu");
-                    shutting_down.store(true, Ordering::Relaxed);
-                    *control_flow = ControlFlow::Exit;
-                }
+        if let Ok(menu_event) = MenuEvent::receiver().try_recv() {
+            if menu_event.id() == quit_id {
+                shutting_down.store(true, Ordering::Relaxed);
+                *control_flow = ControlFlow::Exit;
             }
+        } else if shutting_down.load(Ordering::Relaxed) && *control_flow != ControlFlow::Exit {
+            // A background task flagged shutdown without the user asking — surface it
+            let _ = show_error_dialog(
+                "Slipstream encountered an unexpected error",
+                "A background task shut down unexpectedly (e.g. the HID device could not be re-opened).",
+            );
+            *control_flow = ControlFlow::Exit;
+        } else {
+            *control_flow = ControlFlow::Wait;
         }
 
         // Handle window events (in case window is shown later)
@@ -184,7 +222,6 @@ fn run_event_loop(shutting_down: Arc<AtomicBool>) {
             ..
         } = event
         {
-            println!("Window close requested");
             shutting_down.store(true, Ordering::Relaxed);
             *control_flow = ControlFlow::Exit;
         }

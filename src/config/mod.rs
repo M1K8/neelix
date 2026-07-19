@@ -4,7 +4,8 @@ use serde::Deserialize;
 pub struct Config {
     #[serde(default)]
     pub devices: Vec<DeviceConfig>,
-    #[serde(default)]
+    /// Highest-priority first; config.toml uses the `ordered_recognised_processes` key.
+    #[serde(default, alias = "ordered_recognised_processes")]
     pub recognised_processes: Vec<String>,
     pub ts6_api_key: Option<String>,
     pub ts6_self_name: Option<String>,

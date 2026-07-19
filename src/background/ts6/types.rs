@@ -1,6 +1,5 @@
 use crate::{
-    background::SPLIT_CHAR,
-    nostd_types::{EventType, FOOTER, HEADER},
+    nostd_types::{EventType, FOOTER, HEADER, SPLIT_CHAR},
     types::HidEvent,
 };
 use serde::{Deserialize, Serialize};

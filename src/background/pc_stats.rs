@@ -5,8 +5,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
-use crate::background::SPLIT_CHAR;
-use crate::nostd_types::{CPU, EventType, FOOTER, HEADER, RAM};
+use crate::nostd_types::{CPU, EventType, FOOTER, HEADER, RAM, SPLIT_CHAR};
 use crate::types::HidEvent;
 use sysinfo::System;
 

@@ -1,3 +1,4 @@
+use crate::background::process_watcher::ProcessWatcher;
 use crate::background::sanitize_hid_text;
 use crate::{background::ts6::types::Ts6HidEvent, types::HidEvent};
 use futures_util::{SinkExt, StreamExt};
@@ -21,11 +22,12 @@ mod types;
 pub async fn poll_teamspeak(
     resp: mpsc::Sender<Arc<dyn HidEvent>>,
     shutting_down: Arc<AtomicBool>,
-    api_key: Option<String>,
+    api_key: &str,
     self_name: Option<&str>,
+    proc_watcher: &ProcessWatcher,
 ) {
     let url = "ws://localhost:5899";
-    let ts_api_key = api_key.unwrap_or_default();
+    let ts_api_key = api_key;
 
     'reconnect: loop {
         if shutting_down.load(Ordering::Relaxed) {
@@ -68,6 +70,23 @@ pub async fn poll_teamspeak(
         loop {
             if shutting_down.load(Ordering::Relaxed) {
                 break 'reconnect;
+            }
+
+            if !proc_watcher.is_active("TeamSpeak.exe").await {
+                // send special kill event to blank the canvas
+                let kill = Ts6HidEvent {
+                    nickname: "".to_string(),
+                    message: None,
+                    talking: false,
+                    show: false,
+                    is_self: false,
+                };
+
+                if let Err(e) = resp.send(Arc::new(kill)).await {
+                    eprintln!("Failed to send HID event: {}", e);
+                }
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue 'reconnect;
             }
 
             let msg = match read.next().await {

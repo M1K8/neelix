@@ -1,5 +1,7 @@
+use crate::background::clock;
 use crate::nostd_types::*;
 use crate::types::*;
+use chrono::{Datelike, Timelike};
 use std::sync::Arc;
 
 pub struct HidHandler {
@@ -30,13 +32,34 @@ fn new_device(vid: u16, pid: u16) -> Option<hidapi::HidDevice> {
 }
 
 impl HidHandler {
-    pub fn new(vid: u16, pid: u16) -> Option<Self> {
-        new_device(vid, pid).map(|device| HidHandler { device, vid, pid })
+    pub async fn new(vid: u16, pid: u16) -> Option<Self> {
+        let mut h = new_device(vid, pid).map(|device| HidHandler { device, vid, pid })?;
+        let now = chrono::offset::Local::now();
+        println!(
+            "Publishing initial clock event: {:?}:{:?}:{:?} {:?}:{:?}:{:?}",
+            now.hour(),
+            now.minute(),
+            now.second(),
+            now.year(),
+            now.month(),
+            now.day()
+        );
+        h.publish_hid_event(Arc::new(clock::Time {
+            hours: now.hour() as u8,
+            minutes: now.minute() as u8,
+            seconds: now.second() as u8,
+            year: (now.year() - 1900) as u8,
+            month: (now.month() - 1u32) as u8, // this is actually zero indexed: https://github.com/ChibiOS/ChibiOS/blob/259505e28665781f23323020174302cfa73fd48d/os/hal/src/hal_rtc.c#L265
+            day: now.day() as u8,
+        }))
+        .await;
+        Some(h)
     }
 
-    pub async fn publish_hid_event(&mut self, event: Arc<dyn HidEvent>) {
+    /// Returns false when the device is gone and could not be re-opened.
+    pub async fn publish_hid_event(&mut self, event: Arc<dyn HidEvent>) -> bool {
         if event.event_type() == EventType::MediaUpdateShufflePlay {
-            return;
+            return true;
         }
 
         for chunk in event.chunks() {
@@ -45,9 +68,10 @@ impl HidHandler {
             if !self.send_to_hid_device(&c) {
                 // Device is gone and could not be re-opened; drop the rest of
                 // this frame rather than sending a torn event later.
-                return;
+                return false;
             }
         }
+        true
     }
     fn send_to_hid_device(&mut self, chunk: &HidEventImpl) -> bool {
         // handle report ID

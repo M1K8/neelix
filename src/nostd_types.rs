@@ -7,6 +7,7 @@ pub enum EventType {
     PCUpdate = 0x04,
     RawString = 0x05,
     TS6 = 0x06,
+    Clock = 0x07,
 }
 
 impl EventType {
@@ -18,6 +19,7 @@ impl EventType {
             0x04 => EventType::PCUpdate,
             0x05 => EventType::RawString,
             0x06 => EventType::TS6,
+            0x07 => EventType::Clock,
             _ => EventType::None,
         }
     }
@@ -36,6 +38,14 @@ pub type HidEventImpl = [u8; MAX_HID_EVENT_SIZE];
 pub const HEADER: [u8; 3] = [0xFA, 0x00, 0xF0];
 pub const FOOTER: [u8; 4] = [0xAF, 0x00, 0x0F, 0x00];
 pub const TYPE_BIT: usize = 3;
+
+pub const CLOCK: ScreenSpace = ScreenSpace {
+    x: 30,
+    y: 220,
+    x2: 320,
+    y2: 240,
+};
+
 pub const MUSIC: ScreenSpace = ScreenSpace {
     x: 0,
     y: 0,
@@ -56,13 +66,6 @@ pub const RAM: ScreenSpace = ScreenSpace {
     y2: 240,
 };
 
-pub const TSSELF: ScreenSpace = ScreenSpace {
-    x: 0,
-    y: 83,
-    x2: 270,
-    y2: 110,
-};
-
 pub const TS: ScreenSpace = ScreenSpace {
     x: 0,
     y: 110,
@@ -76,3 +79,5 @@ pub const TS_BUBBLE: ScreenSpace = ScreenSpace {
     x2: 285,
     y2: 240,
 };
+
+pub const SPLIT_CHAR: u8 = '\n' as u8;

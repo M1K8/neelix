@@ -1,4 +1,5 @@
-use crate::background::{SPLIT_CHAR, qgf_art, sanitize_hid_text};
+use crate::background::{qgf_art, sanitize_hid_text};
+use crate::nostd_types::SPLIT_CHAR;
 use crate::nostd_types::{EventType, FOOTER, HEADER};
 use crate::types::HidEvent;
 use image::ImageReader;

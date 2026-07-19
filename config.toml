@@ -1,8 +1,16 @@
 devices = [ 
-    {name= "m1keybioard/m1k3_0",vid = 0xfaf0,pid = 0xfaf0,usage_page = 0xff60,usage = 0x0061},
-    ]
+    {name= "m1keyboard/m1k3_0", vid = 0xfaf0, pid = 0xfaf0, usage_page = 0xff60, usage = 0x0061},
+]
 
 
-recognised_processes = [
+ordered_recognised_processes = [
+    "bf6.exe",
+    "TeamSpeak.exe", 
+    "discord.exe",
+    "Code - Insiders.exe",
     "steam.exe",
 ]
+
+
+
+ts6_api_key = "c766768f-99eb-43f0-8990-71d66dba8691"
