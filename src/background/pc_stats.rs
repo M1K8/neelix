@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use sysinfo::Components;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
@@ -65,7 +64,6 @@ impl PCState {
         shutting_down: Arc<AtomicBool>,
     ) -> Result<(), String> {
         let mut system = sys.lock().await;
-        let mut comp = Components::new_with_refreshed_list();
 
         system.refresh_all();
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -79,20 +77,17 @@ impl PCState {
             system = sys.lock().await;
             system.refresh_cpu_usage();
             system.refresh_memory();
-            comp.refresh(false);
             let cpu = system.global_cpu_usage();
-            let ram = max_ram - system.free_memory();
+            let ram = system.used_memory();
             let curr_cpu_pixel_height = (cpu / 100.0) * (CPU.y2 - CPU.y) as f32;
             let cpu = curr_cpu_pixel_height.round() as u16;
 
             let curr_ram_pixel_height = (ram as f32 / max_ram as f32) * (RAM.y2 - RAM.y) as f32;
             let ram = curr_ram_pixel_height.round() as u16;
-            if cpu != 0 && ram != 0 {
-                match resp.send(Arc::new(PCStatMsg { cpu, ram })).await {
-                    Ok(_) => {}
-                    Err(e) => return Err(e.to_string()),
-                };
-            }
+            match resp.send(Arc::new(PCStatMsg { cpu, ram })).await {
+                Ok(_) => {}
+                Err(e) => return Err(e.to_string()),
+            };
 
             drop(system);
             tokio::time::sleep(Duration::from_secs(1)).await;

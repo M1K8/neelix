@@ -1,9 +1,10 @@
 #![cfg(not(test))]
 #![windows_subsystem = "windows"]
 
-use crate::background::{hid, pc_stats::PCState, process_watcher};
-use crate::ui::dialog::show_error_dialog;
 use lazy_static::lazy_static;
+use slipstream::background::{self, hid, pc_stats::PCState, process_watcher};
+use slipstream::config::Config;
+use slipstream::ui::dialog::show_error_dialog;
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,53 +14,34 @@ use tao::{
     window::WindowBuilder,
 };
 use tokio::sync::Mutex;
-use toml::Value;
 use tray_icon::{
     Icon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuItem},
 };
 
-extern crate hidapi;
-mod background;
-mod nostd_types;
-mod types;
-mod ui;
-mod painter;
-
 lazy_static! {
-    static ref config_opt: Option<Value> = match fs::read_to_string("config.toml") {
-        Ok(contents) => match toml::from_str::<toml::Value>(&contents) {
-            Ok(cfg) => Some(cfg),
-            Err(_e) => None,
-        },
-        Err(_e) => {
-            None
-        }
-    };
+    static ref config_res: Result<Config, String> = fs::read_to_string("config.toml")
+        .map_err(|e| format!("Could not read config.toml: {e}"))
+        .and_then(|contents| {
+            toml::from_str::<Config>(&contents)
+                .map_err(|e| format!("Could not parse config.toml: {e}"))
+        });
 }
 
 #[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if config_opt.is_none() {
-        let title = "neelix: Missing Configuration File";
-        let message =
-            "config.toml not found. Please create a config.toml file and restart the app.";
-        let _ = show_error_dialog(title, message);
-        std::process::exit(1);
-    }
-    let ts_api_key = config_opt.as_ref().and_then(|config| {
-        config
-            .get("ts6_api_key")
-            .and_then(|v| v.as_str())
-            .map(String::from)
-    });
+    let config = match config_res.as_ref() {
+        Ok(config) => config,
+        Err(e) => {
+            let _ = show_error_dialog("neelix: Configuration Error", e);
+            std::process::exit(1);
+        }
+    };
 
-    let self_name = config_opt
-        .as_ref()
-        .and_then(|config| config.get("ts6_self_name").and_then(|v| v.as_str()));
+    let ts_api_key = config.ts6_api_key.clone();
+    let self_name = config.ts6_self_name.as_deref();
 
-    // If Teamspeak key is missing, show a native cross-platform dialog and exit.
     if ts_api_key.is_none() {
         let title = "neelix: Missing Teamspeak API Key";
         let message = "config.toml is missing ts6_api_key. Please add ts6_api_key to config.toml and restart the app.";
@@ -67,37 +49,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let device = config_opt
-        .as_ref()
-        .and_then(|config| config.get("devices"))
-        .and_then(|d| d.as_array())
-        .and_then(|arr| arr.get(0));
-    let device = match device {
+    let device = match config.devices.first() {
         Some(dev) => dev,
         None => {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "No devices found in config",
-            )) as Box<dyn std::error::Error>);
+            let _ = show_error_dialog(
+                "neelix: No Devices Configured",
+                "config.toml has no [[devices]] entries. Please add one and restart the app.",
+            );
+            std::process::exit(1);
         }
     };
 
-    let hid_vid = device.get("vid").unwrap().as_integer().unwrap() as u16;
-    let hid_pid = device.get("pid").unwrap().as_integer().unwrap() as u16;
+    let mut hid = match hid::HidHandler::new(device.vid, device.pid) {
+        Some(hid) => hid,
+        None => {
+            let _ = show_error_dialog(
+                "neelix: HID Device Not Found",
+                &format!(
+                    "Could not open HID device {:04x}:{:04x}. Is the keyboard plugged in?",
+                    device.vid, device.pid
+                ),
+            );
+            std::process::exit(1);
+        }
+    };
 
-    let mut hid = hid::HidHandler::new(hid_vid, hid_pid).expect("Failed to initialize HID handler");
-
-    let expected_processes: Vec<String> = config_opt
-        .as_ref()
-        .and_then(|config| config.get("ordered_recognised_processes"))
-        .and_then(|p| p.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|p| p.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
+    let expected_processes = config.recognised_processes.clone();
     if expected_processes.is_empty() {
         eprintln!("Warning: No processes configured");
     }
@@ -164,8 +141,12 @@ fn run_event_loop(shutting_down: Arc<AtomicBool>) {
         .build(&event_loop)
         .unwrap();
 
-    // Load icon
-    let icon = Icon::from_path(r"C:\Users\mikep\neelix\src\icon.ico", Some((64, 64)))
+    // Load the embedded icon so the binary works from any install location
+    let icon_image = image::load_from_memory(include_bytes!("icon.ico"))
+        .expect("Failed to decode embedded icon")
+        .to_rgba8();
+    let (icon_width, icon_height) = icon_image.dimensions();
+    let icon = Icon::from_rgba(icon_image.into_raw(), icon_width, icon_height)
         .expect("Failed to load icon");
 
     // Create tray menu

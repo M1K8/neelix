@@ -1,4 +1,4 @@
-use crate::background::{SPLIT_CHAR, qgf_art};
+use crate::background::{SPLIT_CHAR, qgf_art, sanitize_hid_text};
 use crate::nostd_types::{EventType, FOOTER, HEADER};
 use crate::types::HidEvent;
 use image::ImageReader;
@@ -130,8 +130,6 @@ pub async fn poll_now_playing(
                     } => {
                         let mut last_touched: i64 = 0;
                         while let Some(evt) = rx.recv().await {
-                            let mut _image_vec: Option<Vec<u8>> = None;
-                            let mut artwork_qgf: Option<Vec<u8>> = None;
                             match evt {
                                 Media(model, image) => {
                                     if let Some(timelime) = model.timeline {
@@ -140,6 +138,7 @@ pub async fn poll_now_playing(
                                         }
                                         last_touched = timelime.last_updated_at_ms;
                                     }
+                                    let mut artwork_qgf: Option<Vec<u8>> = None;
                                     if let Some(image) = image {
                                         let cursor = Cursor::new(&image.data);
                                         let Ok(img_reader) =
@@ -155,22 +154,19 @@ pub async fn poll_now_playing(
 
                                         image = image.thumbnail(50, 50);
                                         artwork_qgf = qgf_art::image_to_qgf(&image).ok();
-                                        let e = image.to_rgba8().into_raw();
-
-                                        _image_vec = Some(e);
                                     }
                                     if let Some(media) = model.media {
                                         let mut media_info = MediaInfo {
-                                            title: Some(latinrs::encode_str(&media.title)),
-                                            artist: Some(latinrs::encode_str(&media.artist)),
+                                            title: Some(sanitize_hid_text(&media.title)),
+                                            artist: Some(sanitize_hid_text(&media.artist)),
                                             is_shuffle: None,
                                             album: None,
-                                            artwork: None, //image_vec,
+                                            artwork: None,
                                             artwork_qgf,
                                         };
                                         if let Some(album) = media.album {
                                             media_info.album =
-                                                Some(latinrs::encode_str(&album.title));
+                                                Some(sanitize_hid_text(&album.title));
                                         }
                                         resp.send(Arc::new(media_info)).await.ok();
                                     }
@@ -195,90 +191,127 @@ pub async fn poll_now_playing(
     }
 }
 
-//redo as yersterday
+/// Fetch album art bytes from an MPRIS art URL. These are commonly `file://`
+/// URIs pointing at a local cache, so handle those without HTTP.
+#[cfg(target_os = "linux")]
+fn fetch_art(url: &str) -> Option<Vec<u8>> {
+    if let Some(path) = url.strip_prefix("file://") {
+        std::fs::read(percent_decode_path(path)).ok()
+    } else {
+        reqwest::blocking::get(url).ok()?.bytes().ok().map(|b| b.to_vec())
+    }
+}
+
+/// Minimal percent-decoding for file:// URI paths (e.g. "%20" -> space).
+#[cfg(target_os = "linux")]
+fn percent_decode_path(s: &str) -> std::path::PathBuf {
+    fn hex(b: u8) -> Option<u8> {
+        (b as char).to_digit(16).map(|d| d as u8)
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push(hi * 16 + lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    use std::os::unix::ffi::OsStringExt;
+    std::ffi::OsString::from_vec(out).into()
+}
+
 #[cfg(target_os = "linux")]
 pub async fn poll_now_playing(
-    resp: mpsc::Sender<Arc<MediaInfo>>,
+    resp: mpsc::Sender<Arc<dyn HidEvent>>,
     shutting_down: Arc<AtomicBool>,
-) -> Result<(), String> {
-    let player = PlayerFinder::new()
-        .expect("Could not connect to D-Bus")
-        .find_active()
-        .expect("Could not find active player");
+) {
+    // The mpris API is blocking and its D-Bus handles are not Send, so run
+    // the whole poll loop on one blocking thread instead of holding them
+    // across await points.
+    let _ = tokio::task::spawn_blocking(move || {
+        loop {
+            if shutting_down.load(Ordering::Relaxed) {
+                return;
+            }
 
-    let events = player.events().expect("Could not start event stream");
+            let finder = match PlayerFinder::new() {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("Could not connect to D-Bus: {e}");
+                    std::thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+            let player = match finder.find_active() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("Could not find active player: {e}");
+                    std::thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+            let events = match player.events() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Could not start event stream: {e}");
+                    std::thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
 
-    for event in events {
-        if shutting_down.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-        match event {
-            Ok(event) => match event {
-                mpris::Event::TrackChanged(track) => {
-                    let mut title = Option::None;
-                    let mut artist = Option::None;
-                    let mut album = Option::None;
-                    let mut artwork = Option::None;
-                    let mut artwork_qgf = Option::None;
+            for event in events {
+                if shutting_down.load(Ordering::Relaxed) {
+                    return;
+                }
+                match event {
+                    Ok(mpris::Event::TrackChanged(track)) => {
+                        let title = track.title().map(sanitize_hid_text);
+                        let artist = track.artists().map(|a| sanitize_hid_text(&a.join(", ")));
+                        let album = track.album_name().map(sanitize_hid_text);
+                        let is_shuffle = player.get_shuffle().unwrap_or(false);
 
-                    if let Some(t) = track.track_id() {
-                        title = Some(latinrs::encode_str(&t.to_string()));
-                    }
-
-                    if let Some(a) = track.album_artists() {
-                        artist = Some(a.join(", "));
-                    }
-
-                    if let Some(alb) = track.album_name() {
-                        album = Some(alb.to_string());
-                    }
-
-                    let is_shuffle = player.get_shuffle().unwrap_or(false);
-                    if let Some(i) = track.art_url() {
-                        let resp = resp.clone();
-                        let i = i.to_string();
-                        tokio::task::spawn_blocking(move || {
-                            if let Ok(res) = reqwest::blocking::get(i) {
-                                if let Ok(bytes) = res.bytes() {
-                                    let cursor = Cursor::new(&bytes);
-                                    let Ok(img_reader) =
-                                        ImageReader::new(cursor).with_guessed_format()
-                                    else {
-                                        println!("Could not read image data");
-                                        return;
-                                    };
-                                    let Ok(mut image) = img_reader.decode() else {
-                                        println!("Could not decode image data");
-                                        return;
-                                    };
-
-                                    image = image.thumbnail(50, 50);
-                                    artwork_qgf = qgf_art::image_to_qgf(&image).ok();
-                                    let e = image.to_rgba8().into_raw();
-                                    println!("{}", &e.len());
-                                    artwork = Some(e);
+                        let mut artwork = None;
+                        let mut artwork_qgf = None;
+                        if let Some(url) = track.art_url() {
+                            if let Some(bytes) = fetch_art(url) {
+                                let cursor = Cursor::new(&bytes);
+                                if let Ok(img_reader) =
+                                    ImageReader::new(cursor).with_guessed_format()
+                                {
+                                    if let Ok(mut image) = img_reader.decode() {
+                                        image = image.thumbnail(50, 50);
+                                        artwork_qgf = qgf_art::image_to_qgf(&image).ok();
+                                        artwork = Some(image.to_rgba8().into_raw());
+                                    }
                                 }
                             }
-                            artwork = artwork;
-                            let media_info = MediaInfo {
-                                title: title,
-                                artist: artist,
-                                album: album,
-                                is_shuffle: Some(is_shuffle),
-                                artwork,
-                                artwork_qgf,
-                            };
-                            let resp = resp.clone();
-
-                            resp.blocking_send(Arc::new(media_info)).unwrap();
-                        });
+                        }
+                        let media_info = MediaInfo {
+                            title,
+                            artist,
+                            album,
+                            is_shuffle: Some(is_shuffle),
+                            artwork,
+                            artwork_qgf,
+                        };
+                        if resp.blocking_send(Arc::new(media_info)).is_err() {
+                            // Receiver gone — we're shutting down
+                            return;
+                        }
                     }
+                    Ok(event) => println!("Event: {:?}", event),
+                    Err(e) => println!("Error receiving event: {}", e),
                 }
-                _ => println!("Event: {:?}", event),
-            },
-            Err(e) => println!("Error receiving event: {}", e),
+            }
+            // The event stream ended (player exited) — loop around and look
+            // for a new active player.
         }
-    }
-
-    Ok(())
+    })
+    .await;
 }

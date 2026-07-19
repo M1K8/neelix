@@ -20,12 +20,28 @@ pub fn show_error_dialog(title: &str, message: &str) -> Result<()> {
             _window: &mut gpui::Window,
             _cx: &mut Context<Self>,
         ) -> impl IntoElement {
+            use gpui::div;
+            use gpui::prelude::*;
             use gpui_component::button::Button as GpButton;
             use gpui_component::button::ButtonVariants;
 
-            GpButton::new("ok").primary().on_click(|_ev, _window, _cx| {
-                std::process::exit(0);
-            })
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                .size_full()
+                .child(self.title.clone())
+                .child(self.message.clone())
+                .child(
+                    GpButton::new("ok")
+                        .primary()
+                        .label("OK")
+                        .on_click(|_ev, _window, _cx| {
+                            // This dialog is only shown for fatal errors
+                            std::process::exit(1);
+                        }),
+                )
         }
     }
 
