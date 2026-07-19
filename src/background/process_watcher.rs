@@ -1,4 +1,4 @@
-use crate::background::SPLIT_CHAR;
+use crate::background::{SPLIT_CHAR, qgf_art};
 use crate::nostd_types::FOOTER;
 use crate::nostd_types::HEADER;
 use std::collections::HashMap;
@@ -20,6 +20,10 @@ pub struct Process {
     pub pid: u16,
     pub is_running: bool,
     pub metadata: Option<HashMap<String, String>>,
+    /// QGF-encoded process icon (from `icons/<stem>.ico`) built via the
+    /// qmk-qgf crate; not transmitted yet.
+    #[serde(skip)]
+    pub icon_qgf: Option<Vec<u8>>,
 }
 
 impl HidEvent for Process {
@@ -69,36 +73,45 @@ pub async fn process_watcher(
         system.refresh_processes(ProcessesToUpdate::All, true);
         let processes = system.processes();
         for p in processes.values() {
-            let name = p.name().to_str().unwrap();
+            // Skip processes with non-UTF-8 names rather than panicking
+            let Some(name) = p.name().to_str() else {
+                continue;
+            };
             let this_name = name.to_owned();
             if expected_processes.contains(&this_name) {
                 is_still_alive.insert(this_name.clone());
                 if !seen_this_cycle.contains(&this_name) {
                     let index = expected_processes
                         .iter()
-                        .position(|n| n == p.name().to_str().unwrap())
+                        .position(|n| *n == this_name)
                         .unwrap();
                     let mut lo_prio = false;
                     for proc in &seen_this_cycle {
                         if expected_processes.iter().position(|n| n == proc)
-                            < expected_processes.iter().position(|n| n == name)
+                            < expected_processes.iter().position(|n| *n == this_name)
                         {
                             lo_prio = true;
                             break;
                         }
                     }
                     if !lo_prio {
-                        let name = name.to_owned();
-                        seen_this_cycle.insert(name.clone());
+                        seen_this_cycle.insert(this_name.clone());
 
-                        chan.send(Arc::new(Process {
-                            name,
-                            pid: index as u16,
-                            is_running: true,
-                            metadata: None,
-                        }))
-                        .await
-                        .unwrap();
+                        let icon_qgf = qgf_art::process_icon_qgf(&this_name);
+                        if chan
+                            .send(Arc::new(Process {
+                                name: this_name,
+                                pid: index as u16,
+                                is_running: true,
+                                metadata: None,
+                                icon_qgf,
+                            }))
+                            .await
+                            .is_err()
+                        {
+                            // Receiver gone — we're shutting down
+                            return;
+                        }
                     }
                 }
             }
@@ -108,21 +121,27 @@ pub async fn process_watcher(
         for p in seen_this_cycle_clone {
             if !processes
                 .values()
-                .any(|proc| proc.name().to_str().unwrap() == p)
+                .any(|proc| proc.name().to_str() == Some(p.as_str()))
                 && is_still_alive.contains(&p)
             {
                 // println!("Process exited: {}", p);
                 let index = expected_processes.iter().position(|n| n == &p).unwrap();
                 seen_this_cycle.remove(&p);
                 is_still_alive.remove(&p);
-                chan.send(Arc::new(Process {
-                    name: p,
-                    pid: index as u16,
-                    is_running: false,
-                    metadata: None,
-                }))
-                .await
-                .unwrap();
+                if chan
+                    .send(Arc::new(Process {
+                        name: p,
+                        pid: index as u16,
+                        is_running: false,
+                        metadata: None,
+                        icon_qgf: None,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    // Receiver gone — we're shutting down
+                    return;
+                }
                 tokio::time::sleep(Duration::from_millis(250)).await; // leave some time
             }
         }

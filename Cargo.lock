@@ -3497,34 +3497,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ispc-downsampler"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4876f1d990df2a500bf8ce65498e03ff5d5795f8558ffd40d18dfbf7785fe7a8"
-dependencies = [
- "ispc_rt",
-]
-
-[[package]]
-name = "ispc_rt"
-version = "2.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "975b362d330dc07079e546ef0e7c6e7ab03f7fbcf251609d5d5dcd3caf398ed6"
-dependencies = [
- "libc",
- "num_cpus",
-]
-
-[[package]]
-name = "itertools"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5144,6 +5116,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "qmk-qgf"
+version = "0.1.0"
+source = "git+https://github.com/M1K8/qmk-qgf-rs?branch=main#c4cb8fad744b6fe7bdeba4a8cac11afccfcf1086"
+dependencies = [
+ "png 0.17.16",
+]
+
+[[package]]
 name = "qoi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6205,17 +6185,15 @@ name = "slipstream"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "color_quant",
  "futures-util",
  "gpui",
  "gpui-component",
  "hidapi",
  "image",
- "ispc-downsampler",
- "itertools 0.10.5",
  "latinrs",
  "lazy_static",
  "mpris",
+ "qmk-qgf",
  "reqwest",
  "serde",
  "serde_json",
