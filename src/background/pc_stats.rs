@@ -77,16 +77,24 @@ impl PCState {
             system.refresh_cpu_usage();
             system.refresh_memory();
             let cpu = system.global_cpu_usage();
-            let ram = system.used_memory();
+            // available_memory() is what free_memory() returns on Windows, but
+            // unlike free_memory() it also excludes cache/buffers on Linux.
+            let ram = max_ram - system.available_memory();
             let curr_cpu_pixel_height = (cpu / 100.0) * (CPU.y2 - CPU.y) as f32;
             let cpu = curr_cpu_pixel_height.round() as u16;
 
             let curr_ram_pixel_height = (ram as f32 / max_ram as f32) * (RAM.y2 - RAM.y) as f32;
             let ram = curr_ram_pixel_height.round() as u16;
-            match resp.send(Arc::new(PCStatMsg { cpu, ram })).await {
-                Ok(_) => {}
-                Err(e) => return Err(e.to_string()),
-            };
+            // Do not transmit a zero bar height. These values are sent as the
+            // first bytes of the frame, where the firmware cannot tell a real
+            // 0 from the 0x00 padding, so a zero blanks both bars. Skipping the
+            // update leaves the last good value on screen instead.
+            if cpu != 0 && ram != 0 {
+                match resp.send(Arc::new(PCStatMsg { cpu, ram })).await {
+                    Ok(_) => {}
+                    Err(e) => return Err(e.to_string()),
+                };
+            }
 
             drop(system);
             tokio::time::sleep(Duration::from_secs(1)).await;
