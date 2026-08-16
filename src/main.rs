@@ -98,14 +98,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let send_events_2 = send_events.clone();
     let mut pc_state = PCState::init();
     let system = Arc::new(Mutex::new(System::new()));
+    // The stats sampler gets its own System handle. sysinfo derives CPU usage
+    // from the delta between refreshes on a given System, so sharing one with
+    // the process scans would let them perturb the once-a-second CPU reading
+    // (they also hold the lock for the duration of a full scan).
+    let stats_system = Arc::new(Mutex::new(System::new()));
 
     check_if_im_running(system.clone()).await;
 
-    let sys_cl = system.clone();
     let shutting_down_2 = shutting_down.clone();
     tokio::spawn(async move {
         pc_state
-            .poll_pc_stats(sys_cl, send_events_2, shutting_down_2)
+            .poll_pc_stats(stats_system, send_events_2, shutting_down_2)
             .await
     });
 
