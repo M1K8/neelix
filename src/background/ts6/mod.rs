@@ -28,6 +28,10 @@ pub async fn poll_teamspeak(
 ) {
     let url = "ws://localhost:5899";
     let ts_api_key = api_key;
+    // Whether the blank-canvas frame has already been sent for the current
+    // absence of TeamSpeak. Lives outside the reconnect loop so the frame goes
+    // out once per transition rather than every 5s.
+    let mut blanked = false;
 
     'reconnect: loop {
         if shutting_down.load(Ordering::Relaxed) {
@@ -73,26 +77,35 @@ pub async fn poll_teamspeak(
             }
 
             if !proc_watcher.is_active("TeamSpeak.exe").await {
-                // send special kill event to blank the canvas
-                let kill = Ts6HidEvent {
-                    nickname: "".to_string(),
-                    message: None,
-                    talking: false,
-                    show: false,
-                    is_self: false,
-                };
+                // send special kill event to blank the canvas, once per
+                // transition — re-sending it every 5s costs the firmware a
+                // redraw for a canvas that is already blank.
+                if !blanked {
+                    let kill = Ts6HidEvent {
+                        nickname: "".to_string(),
+                        message: None,
+                        talking: false,
+                        show: false,
+                        is_self: false,
+                    };
 
-                if let Err(e) = resp.send(Arc::new(kill)).await {
-                    eprintln!("Failed to send HID event: {}", e);
+                    if let Err(e) = resp.send(Arc::new(kill)).await {
+                        eprintln!("Failed to send HID event: {}", e);
+                    }
+                    blanked = true;
                 }
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue 'reconnect;
             }
+            blanked = false;
 
             let msg = match read.next().await {
                 Some(Ok(msg)) => msg,
                 Some(Err(e)) => {
                     eprintln!("WebSocket error: {}", e);
+                    // Back off. A persistent read error otherwise spins this
+                    // loop at full tilt, since next() stays immediately ready.
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
                 }
                 None => {
