@@ -129,48 +129,63 @@ pub async fn poll_now_playing(
                         mut rx,
                         source,
                     } => {
-                        let mut last_touched: i64 = 0;
+                        // Identity of the last track transmitted. GSMTC re-emits
+                        // Media on every timeline tick; the previous guard keyed
+                        // on timeline.last_updated_at_ms, which changes on each
+                        // of those ticks, so it never suppressed anything while
+                        // music was playing — every tick sent a frame and
+                        // re-decoded the full-size artwork. Keying on the track
+                        // itself means one frame per actual change.
+                        let mut last_track: Option<(String, String, String)> = None;
                         while let Some(evt) = rx.recv().await {
                             match evt {
                                 Media(model, image) => {
-                                    if let Some(timelime) = model.timeline {
-                                        if timelime.last_updated_at_ms == last_touched {
-                                            continue; // we see event duplication, so account for that here.
-                                        }
-                                        last_touched = timelime.last_updated_at_ms;
+                                    let Some(media) = model.media else {
+                                        continue;
+                                    };
+                                    let title = sanitize_hid_text(&media.title);
+                                    let artist = sanitize_hid_text(&media.artist);
+                                    let album = media
+                                        .album
+                                        .as_ref()
+                                        .map(|a| sanitize_hid_text(&a.title))
+                                        .unwrap_or_default();
+
+                                    let track = (title.clone(), artist.clone(), album.clone());
+                                    if last_track.as_ref() == Some(&track) {
+                                        continue;
                                     }
+                                    last_track = Some(track);
+
                                     let mut artwork_qgf: Option<Vec<u8>> = None;
                                     if let Some(image) = image {
                                         let cursor = Cursor::new(&image.data);
-                                        let Ok(img_reader) =
+                                        // A failed decode only costs us the
+                                        // artwork; it must not drop the track
+                                        // info, which the old `continue` did.
+                                        if let Ok(img_reader) =
                                             ImageReader::new(cursor).with_guessed_format()
-                                        else {
-                                            //println!("Could not read image data");
-                                            continue;
-                                        };
-                                        let Ok(mut image) = img_reader.decode() else {
-                                            //println!("Could not decode image data");
-                                            continue;
-                                        };
-
-                                        image = image.thumbnail(50, 50);
-                                        artwork_qgf = qgf_art::image_to_qgf(&image).ok();
-                                    }
-                                    if let Some(media) = model.media {
-                                        let mut media_info = MediaInfo {
-                                            title: Some(sanitize_hid_text(&media.title)),
-                                            artist: Some(sanitize_hid_text(&media.artist)),
-                                            is_shuffle: None,
-                                            album: None,
-                                            artwork: None,
-                                            artwork_qgf,
-                                        };
-                                        if let Some(album) = media.album {
-                                            media_info.album =
-                                                Some(sanitize_hid_text(&album.title));
+                                        {
+                                            if let Ok(mut image) = img_reader.decode() {
+                                                image = image.thumbnail(50, 50);
+                                                artwork_qgf = qgf_art::image_to_qgf(&image).ok();
+                                            }
                                         }
-                                        resp.send(Arc::new(media_info)).await.ok();
                                     }
+
+                                    let media_info = MediaInfo {
+                                        title: Some(title),
+                                        artist: Some(artist),
+                                        is_shuffle: None,
+                                        album: if album.is_empty() {
+                                            None
+                                        } else {
+                                            Some(album)
+                                        },
+                                        artwork: None,
+                                        artwork_qgf,
+                                    };
+                                    resp.send(Arc::new(media_info)).await.ok();
                                 }
                                 _ => {}
                             }

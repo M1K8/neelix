@@ -69,6 +69,11 @@ impl PCState {
         let max_ram: u64 = system.total_memory();
         drop(system);
 
+        // Last bar heights actually transmitted. The bars are only 240px tall,
+        // so most one-second samples round to the same height; re-sending it
+        // costs the firmware a redraw that changes nothing on screen.
+        let mut last_sent: Option<(u16, u16)> = None;
+
         loop {
             if shutting_down.load(Ordering::Relaxed) {
                 return Ok(());
@@ -89,11 +94,12 @@ impl PCState {
             // first bytes of the frame, where the firmware cannot tell a real
             // 0 from the 0x00 padding, so a zero blanks both bars. Skipping the
             // update leaves the last good value on screen instead.
-            if cpu != 0 && ram != 0 {
+            if cpu != 0 && ram != 0 && last_sent != Some((cpu, ram)) {
                 match resp.send(Arc::new(PCStatMsg { cpu, ram })).await {
                     Ok(_) => {}
                     Err(e) => return Err(e.to_string()),
                 };
+                last_sent = Some((cpu, ram));
             }
 
             drop(system);
