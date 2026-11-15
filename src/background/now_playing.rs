@@ -125,7 +125,7 @@ pub async fn poll_now_playing(
             while let Some(evt) = rx.recv().await {
                 match evt {
                     SessionCreated {
-                        session_id,
+                        session_id: _,
                         mut rx,
                         source,
                     } => {
@@ -292,7 +292,6 @@ pub async fn poll_now_playing(
                         let album = track.album_name().map(sanitize_hid_text);
                         let is_shuffle = player.get_shuffle().unwrap_or(false);
 
-                        let mut artwork = None;
                         let mut artwork_qgf = None;
                         if let Some(url) = track.art_url() {
                             if let Some(bytes) = fetch_art(url) {
@@ -303,7 +302,6 @@ pub async fn poll_now_playing(
                                     if let Ok(mut image) = img_reader.decode() {
                                         image = image.thumbnail(50, 50);
                                         artwork_qgf = qgf_art::image_to_qgf(&image).ok();
-                                        artwork = Some(image.to_rgba8().into_raw());
                                     }
                                 }
                             }
@@ -313,7 +311,13 @@ pub async fn poll_now_playing(
                             artist,
                             album,
                             is_shuffle: Some(is_shuffle),
-                            artwork,
+                            // Match the Windows path and send no raw artwork.
+                            // to_bytes() appends it verbatim, so a 50x50 RGBA
+                            // buffer is 10,000 bytes — ~313 HID packets per
+                            // track change, which stalls the firmware. The
+                            // Windows path has had this disabled all along, so
+                            // the firmware never expected it here either.
+                            artwork: None,
                             artwork_qgf,
                         };
                         if resp.blocking_send(Arc::new(media_info)).is_err() {

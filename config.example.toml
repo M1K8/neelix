@@ -1,0 +1,25 @@
+# Copy to config.toml and fill in. config.toml is gitignored because
+# ts6_api_key is a live credential — do not commit it.
+
+devices = [
+    { name = "m1keyboard/m1k3_0", vid = 0xfaf0, pid = 0xfaf0, usage_page = 0xff60, usage = 0x0061 },
+]
+
+# Highest priority first: when several are running, the earliest one wins the
+# display slot. The code also accepts the key `recognised_processes`.
+ordered_recognised_processes = [
+    "bf6.exe",
+    "TeamSpeak.exe",
+    "discord.exe",
+    "Code - Insiders.exe",
+    "steam.exe",
+]
+
+# TeamSpeak 6 "Remote Apps" API key. Required — the app exits with a dialog
+# without it. Note that TS6 integration is gated on "TeamSpeak.exe" appearing
+# in the process list above.
+ts6_api_key = "00000000-0000-0000-0000-000000000000"
+
+# Your own nickname, used to tell your talk state from everyone else's.
+# Defaults to "M1K" when unset.
+# ts6_self_name = "M1K"

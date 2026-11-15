@@ -1,1 +1,4 @@
 /target
+
+# Holds ts6_api_key, a live credential. Use config.example.toml as the template.
+config.toml
